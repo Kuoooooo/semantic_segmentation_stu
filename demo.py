@@ -5,6 +5,7 @@ __time__        = '2021/11/8 14:12'
 
 import torch
 import cv2
+from PIL import Image
 import matplotlib.pyplot as plt
 from torchvision import transforms, models
 import numpy as np
@@ -25,7 +26,6 @@ def decode_seg(image, source, nc=21):
     r = np.zeros_like(image).astype(np.uint8)
     g = np.zeros_like(image).astype(np.uint8)
     b = np.zeros_like(image).astype(np.uint8)
-
     # 每个像素对应的类别赋予相应的颜色
     for l in range(0, nc):
         idx = image == l
@@ -34,22 +34,17 @@ def decode_seg(image, source, nc=21):
         b[idx] = label_colors[l, 2]
 
     # 这个就是语义分割的彩色图
-    rgb = np.stack([r, g, b], axis=2)
-    plt.imshow(rgb)
+    rgb = cv2.merge([r, g, b])
+    # plt.imshow(rgb)
     # plt.axis('off')
-    plt.show()
-
+    # plt.show()
     foreground = cv2.imread(source)
-
     foreground = cv2.cvtColor(foreground, cv2.COLOR_BGR2RGB)
     foreground = cv2.resize(foreground, (r.shape[1], r.shape[0]))
-
     # 这里使用一张全白的图像作为替换的背景
     background = 255 * np.ones_like(rgb).astype(np.uint8)
-
     foreground = foreground.astype(float)
     background = background.astype(float)
-
     # 背景的值为0，这里以0为阈值由分割图得到mask，分离出背景
     # 在二值化之前需要先将分割图转化成灰度图，否则thresh分别作用于每个通道
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
@@ -59,18 +54,15 @@ def decode_seg(image, source, nc=21):
     # 将mask转换成3通道
     alpha = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
     alpha = alpha.astype(float) / 255
-    plt.imshow(alpha)
+    # plt.imshow(alpha)
     # plt.axis('off')
-    plt.show()
-
+    # plt.show()
     # alpha混合
     foreground = cv2.multiply(alpha, foreground)
-
     background = cv2.multiply(1.0 - alpha, background)
-
     outImage = cv2.add(foreground, background)
 
-    return outImage / 255
+    return np.uint8(outImage)
 
 
 if __name__ == '__main__':
@@ -83,7 +75,7 @@ if __name__ == '__main__':
     # model.load_state_dict(torch.load('weights/deeplabv3_resnet101_coco-586e9e4e.pth', map_location=device), strict=False)
     model.eval()
     # 加载图片
-    image_path = 'huge.jpg'
+    image_path = 'images/huge.jpg'
     input_image = cv2.imread(image_path)
     # 图片转换
     preprocess = transforms.Compose([
@@ -91,14 +83,28 @@ if __name__ == '__main__':
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     input_tensor = preprocess(input_image)
-    input_batch = input_tensor.unsqueeze(0)
-    input_batch = input_batch.to(device)
-
+    input_batch = input_tensor.unsqueeze(0).to(device)
     with torch.no_grad():
         output = model(input_batch)['out'][0]
     output_predictions = output.argmax(0)
-
     rgb = decode_seg(output_predictions, image_path)
-
-    plt.imshow(rgb)
-    plt.show()
+    # plt.imshow(rgb / 255)
+    # plt.axis('off')
+    # plt.show()
+    # 背景透明需要使用 RGBA
+    rgba = cv2.cvtColor(rgb, cv2.COLOR_RGB2RGBA)
+    # numpy array 转 pillow
+    img = Image.fromarray(rgba)
+    L, H = img.size
+    color_0 = (255, 255, 255, 255)
+    # 对图片每个像素点进行处理
+    for h in range(H):
+        for l in range(L):
+            # 像素点坐标
+            dot = (l, h)
+            # 获取像素点
+            color_1 = img.getpixel(dot)
+            if color_1 == color_0:
+                color_1 = color_1[:-1] + (0,)
+                img.putpixel(dot, color_1)
+    img.save('result.png')
